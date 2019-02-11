@@ -10,8 +10,75 @@
 #include <unistd.h>
 
 #include <limits.h>
+typedef struct {
+  char *read;
+  char *read_write;
+  bool exec;
+  bool fork;
+} permission;
+
+// bool flagchoice(int argc, char *argv[argc], permission *perm) {
+//   unsigned int counter;
+//   for (counter = 1; argv[counter] != NULL; counter++) {
+//     // Verifies if User inserted Flag
+//     if (*(argv[counter]) != '-' || *(argv[counter] + 1) != '-') {
+//       fprintf(stderr, "Please give a -- flag\n");
+//       perror("No proper flag");
+//       exit(2);
+//     }
+
+//     // Parse flags
+//     if (strcmp((argv[counter] + 2), "read") { //compare the string start from
+//     index 2
+//       if ()
+//     }
+//     switch (*(argv[counter] + 1)) {
+//       case 'r':
+//         if (r_flag(argv, input, &counter) == false) return false;
+//         break;
+//       case 'w':
+//         if (w_flag(argv, output, &counter) == false) return false;
+//         break;
+//       default:  // Informs User of invalid flag
+//       {
+//         fprintf(stderr, "Invalid flag.\n");
+//         return false;
+//       } break;
+//     }  // switch
+//   }    // for
+//   return true;
+// }
 
 int main(int argc, char **argv) {
+  permission perm;
+  // flagchoice(argc, argv, &perm);
+  int opt;
+  while ((opt = getopt(argc, argv, ":r:w:ef")) != -1) {
+    switch (opt) {
+      case 'r':
+        // printf("read : %s\n", optarg);
+        perm.read = optarg;
+        break;
+      case 'w':
+        // printf("read_write : %s\n", optarg);
+        perm.read_write = optarg;
+        break;
+      case 'e':
+        // printf("exec : %c\n", opt);
+        perm.exec = true; 
+      case 'f':
+        // printf("fork : %c\n", opt);
+        perm.fork = true; 
+        break;
+    }
+  }
+
+  printf("optind: %d\n", optind);
+printf("read: %s\n", perm.read);
+printf("write: %s\n", perm.read_write);
+printf("exec: %d\n", perm.exec);
+printf("fork: %d\n", perm.fork);
+
   // Call fork to create a child process
   pid_t child_pid = fork();
   if (child_pid == -1) {
@@ -28,7 +95,8 @@ int main(int argc, char **argv) {
 
     // Stop the process so the tracer can catch it
     raise(SIGSTOP);
-    if (execlp(argv[1], argv[1], NULL)) {
+
+    if (execlp(argv[optind + 1], argv[optind + 1], NULL)) {
       perror("execlp failed");
       exit(2);
     }
