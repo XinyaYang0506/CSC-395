@@ -156,6 +156,7 @@ printf("fork: %d\n", perm.fork);
 
           // Get the system call number
           size_t syscall_num = regs.orig_rax;
+          printf("sys call num is %zu\n", syscall_num);
           int is_sys_call = 1;  // true
           switch (syscall_num) {
             case 0: {
@@ -176,6 +177,14 @@ printf("fork: %d\n", perm.fork);
               const char *filename = (void *)regs.rdi;
               int flags = regs.rsi;
               mode_t mode = regs.rdx;
+              printf("system call open with filename %s\n", filename);
+              break;
+            }
+
+            case 257: {
+              const char *filename = (void *)regs.rsi;
+              // int flags = regs.rsi;
+              // mode_t mode = regs.rdx;
               printf("system call open with filename %s\n", filename);
               break;
             }
@@ -243,15 +252,15 @@ printf("fork: %d\n", perm.fork);
             default: { is_sys_call = false; }
           }
 
-          if (is_sys_call == true) {
-            printf("terminate the child process\n");
-            if (kill(child_pid, SIGKILL) == -1) {
-              perror("kill tracee failed");
-              exit(2);
-            } else {
-              exit(EXIT_SUCCESS);
-            }
-          }
+          // if (is_sys_call == true) {
+          //   printf("terminate the child process\n");
+          //   if (kill(child_pid, SIGKILL) == -1) {
+          //     perror("kill tracee failed");
+          //     exit(2);
+          //   } else {
+          //     exit(EXIT_SUCCESS);
+          //   }
+          // }
 
           // Print the systam call number and register values
           // The meanings of registers will depend on the system call.
