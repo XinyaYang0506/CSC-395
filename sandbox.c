@@ -9,7 +9,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <fcntl.h>
 #include <limits.h>
+#include <sys/stat.h>
 typedef struct {
   char *read;
   char *read_write;
@@ -17,6 +19,24 @@ typedef struct {
   bool fork;
 } permission;
 
+void print_filename(pid_t child_pid, const char *filename) {
+  printf("charBit is %d\n", CHAR_BIT);
+  printf("filename is ");
+  bool string_end = false;
+  while (!string_end) {
+    for (int i = 64; !string_end && i > 0; i = i - 8) {
+      char c = (char)(ptrace(PTRACE_PEEKDATA, child_pid, filename, NULL) >> i);
+      if (c == '\0') {
+        string_end = true;
+      } else {
+        printf("%c", c);
+      }
+    }
+    filename += 8;
+  }
+  printf("\n");
+  return;
+}
 // bool flagchoice(int argc, char *argv[argc], permission *perm) {
 //   unsigned int counter;
 //   for (counter = 1; argv[counter] != NULL; counter++) {
@@ -65,19 +85,19 @@ int main(int argc, char **argv) {
         break;
       case 'e':
         // printf("exec : %c\n", opt);
-        perm.exec = true; 
+        perm.exec = true;
       case 'f':
         // printf("fork : %c\n", opt);
-        perm.fork = true; 
+        perm.fork = true;
         break;
     }
   }
 
   printf("optind: %d\n", optind);
-printf("read: %s\n", perm.read);
-printf("write: %s\n", perm.read_write);
-printf("exec: %d\n", perm.exec);
-printf("fork: %d\n", perm.fork);
+  printf("read: %s\n", perm.read);
+  printf("write: %s\n", perm.read_write);
+  printf("exec: %d\n", perm.exec);
+  printf("fork: %d\n", perm.fork);
 
   // Call fork to create a child process
   pid_t child_pid = fork();
@@ -183,9 +203,17 @@ printf("fork: %d\n", perm.fork);
 
             case 257: {
               const char *filename = (void *)regs.rsi;
-              // int flags = regs.rsi;
+              print_filename(child_pid, filename);
+              int flags = regs.rsi;
+              if (flags == O_RDONLY) {
+                printf("Oh this program wants to read!\n");
+              } else if (flags == O_WRONLY) {
+                printf("Oh this program wants to write!\n");
+              } else if (flags == O_RDWR) {
+                printf("Oh this program wants to read and write!\n");
+              }
               // mode_t mode = regs.rdx;
-              printf("system call open with filename %s\n", filename);
+              printf("system call open\n");
               break;
             }
 
@@ -204,13 +232,17 @@ printf("fork: %d\n", perm.fork);
             }
 
             case 59: {
-              const char *filename = (void *)regs.rdi;
-              if (filename && strcmp(filename, argv[0]) != 0) {
-                is_sys_call = false;
-              } else {
-                char **const argv = (void *)regs.rsi;
-                char **const envp = (void *)regs.rdx;
-                printf("system call execve with filename %s\n", filename);
+              if (!perm.exec) {
+                const char *filename = (void *)regs.rdi;
+                // strange error
+                // print_filename(child_pid, filename);
+                if (filename && strcmp(filename, argv[0]) != 0) {
+                  is_sys_call = false;
+                } else {
+                  char **const argv = (void *)regs.rsi;
+                  char **const envp = (void *)regs.rdx;
+                  printf("system call execve\n");
+                }
               }
 
               break;
