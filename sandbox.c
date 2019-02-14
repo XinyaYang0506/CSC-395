@@ -19,23 +19,45 @@ typedef struct {
   bool fork;
 } permission;
 
-void print_filename(pid_t child_pid, const char *filename) {
-  printf("charBit is %d\n", CHAR_BIT);
-  printf("filename is ");
+const char *find_filename(pid_t child_pid, const char *filename) {
   bool string_end = false;
-  while (!string_end) {
-    for (int i = 64; !string_end && i > 0; i = i - 8) {
-      char c = (char)(ptrace(PTRACE_PEEKDATA, child_pid, filename, NULL) >> i);
+  int counter = 0;
+  char path[PATH_MAX] = {0};
+  while (!string_end && counter < PATH_MAX) {
+    for (int i = 0; !string_end && i < 64; i += 8) {
+      char c = (char)(ptrace(PTRACE_PEEKDATA, child_pid, filename, NULL) >>
+                      i);  // why it is in reverse?
+      // if (c < 32 || c > 126) {
+      //   return NULL;
+      // }
       if (c == '\0') {
         string_end = true;
       } else {
-        printf("%c", c);
+        path[counter] = c;
+        counter++;
       }
     }
     filename += 8;
   }
-  printf("\n");
-  return;
+  char real_path[PATH_MAX] = {0};
+  realpath(path, real_path);
+  printf("PATH is %s\n", real_path);
+  return real_path;
+}
+
+bool is_subdirectory(char *root, const char *dir) {
+  printf("root = %s\n", root);
+  while (root != NULL && dir != NULL &&
+         *root != '\0') {  // not till the end of root
+
+    if (*dir != *root) {  // there is difference between dir and root
+      return false;
+    }
+
+    root++;
+    dir++;
+  }
+  return true;
 }
 // bool flagchoice(int argc, char *argv[argc], permission *perm) {
 //   unsigned int counter;
@@ -71,29 +93,35 @@ void print_filename(pid_t child_pid, const char *filename) {
 
 int main(int argc, char **argv) {
   permission perm;
-  // flagchoice(argc, argv, &perm);
+  perm.read = NULL;
+  perm.read_write = NULL;
+  perm.exec = false;
+  perm.fork = false;
+
   int opt;
-  while ((opt = getopt(argc, argv, ":r:w:ef")) != -1) {
+  while ((opt = getopt(argc, argv, "r:w:ef")) != -1) {
     switch (opt) {
       case 'r':
-        // printf("read : %s\n", optarg);
-        perm.read = optarg;
+        perm.read =
+            realpath(optarg, NULL);  // will be null if the address is invalid
         break;
       case 'w':
-        // printf("read_write : %s\n", optarg);
-        perm.read_write = optarg;
+        perm.read_write =
+            realpath(optarg, NULL);  // will be null if the address is invalid
+        break;
+      case ':':  //!!!!!!TODO: cannot detect missing argument
+        printf("missing argument %c\n", optopt);
         break;
       case 'e':
-        // printf("exec : %c\n", opt);
         perm.exec = true;
+        break;
       case 'f':
-        // printf("fork : %c\n", opt);
         perm.fork = true;
         break;
     }
   }
 
-  printf("optind: %d\n", optind);
+  printf("child: %s\n", argv[optind + 1]);
   printf("read: %s\n", perm.read);
   printf("write: %s\n", perm.read_write);
   printf("exec: %d\n", perm.exec);
@@ -179,49 +207,79 @@ int main(int argc, char **argv) {
           printf("sys call num is %zu\n", syscall_num);
           int is_sys_call = 1;  // true
           switch (syscall_num) {
-            case 0: {
-              unsigned int fd = regs.rdi;
-              size_t count = regs.rdx;
-              printf("system call read with fd %u\n", fd);
-              break;
-            }
+            // case 0: {
+            //   unsigned int fd = regs.rdi;
+            //   size_t count = regs.rdx;
+            //   printf("system call read with fd %u\n", fd);
+            //   break;
+            // }
 
-            case 1: {
-              unsigned int fd = regs.rdi;
-              size_t count = regs.rdx;
-              printf("system call write with fd %u\n", fd);
-              break;
-            }
+            // case 1: {
+            //   unsigned int fd = regs.rdi;
+            //   size_t count = regs.rdx;
+            //   printf("system call write with fd %u\n", fd);
+            //   break;
+            // }
 
             case 2: {
               const char *filename = (void *)regs.rdi;
               int flags = regs.rsi;
-              mode_t mode = regs.rdx;
-              printf("system call open with filename %s\n", filename);
-              break;
-            }
-
-            case 257: {
-              const char *filename = (void *)regs.rsi;
-              print_filename(child_pid, filename);
-              int flags = regs.rsi;
-              if (flags == O_RDONLY) {
-                printf("Oh this program wants to read!\n");
-              } else if (flags == O_WRONLY) {
-                printf("Oh this program wants to write!\n");
-              } else if (flags == O_RDWR) {
+              filename = find_filename(child_pid, filename);
+              if ((flags & O_RDWR) % 4 == 2) {
                 printf("Oh this program wants to read and write!\n");
+                if (perm.read_write != NULL &&
+                    is_subdirectory(perm.read_write, filename)) {
+                  is_sys_call = false;
+                }
+              } else if ((flags & O_WRONLY) % 2 == 1) {
+                printf("Oh this program wants to write!\n");
+                if (perm.read_write != NULL &&
+                    is_subdirectory(perm.read_write, filename)) {
+                  is_sys_call = false;
+                }
+              } else if ((flags & O_RDONLY) % 2 == 0) {
+                printf("Oh this program wants to read!\n");
+                if (perm.read != NULL && is_subdirectory(perm.read, filename)) {
+                  is_sys_call = false;
+                }
               }
               // mode_t mode = regs.rdx;
               printf("system call open\n");
               break;
             }
 
-            case 3: {
-              unsigned int fd = regs.rdi;
-              printf("system call close with fd %u\n", fd);
+            case 257: {
+              const char *filename = (void *)regs.rsi;
+              int flags = regs.rdx;
+              filename = find_filename(child_pid, filename);
+              if ((flags & O_RDWR) % 4 == 2) {
+                printf("Oh this program wants to read and write!\n");
+                if (perm.read_write != NULL &&
+                    is_subdirectory(perm.read_write, filename)) {
+                  is_sys_call = false;
+                }
+              } else if ((flags & O_WRONLY) % 2 == 1) {
+                printf("Oh this program wants to write!\n");
+                if (perm.read_write != NULL &&
+                    is_subdirectory(perm.read_write, filename)) {
+                  is_sys_call = false;
+                }
+              } else if ((flags & O_RDONLY) % 2 == 0) {
+                printf("Oh this program wants to read!\n");
+                if (perm.read != NULL && is_subdirectory(perm.read, filename)) {
+                  is_sys_call = false;
+                }
+              }
+              // mode_t mode = regs.rdx;
+              printf("system call open\n");
               break;
             }
+
+            // case 3: {
+            //   unsigned int fd = regs.rdi;
+            //   printf("system call close with fd %u\n", fd);
+            //   break;
+            // }
 
             case 41: {
               int family = regs.rdi;
@@ -235,14 +293,22 @@ int main(int argc, char **argv) {
               if (!perm.exec) {
                 const char *filename = (void *)regs.rdi;
                 // strange error
-                // print_filename(child_pid, filename);
-                if (filename && strcmp(filename, argv[0]) != 0) {
-                  is_sys_call = false;
-                } else {
-                  char **const argv = (void *)regs.rsi;
-                  char **const envp = (void *)regs.rdx;
-                  printf("system call execve\n");
+
+                if (filename) {
+                  printf("first exec is %s\n", filename);
                 }
+                // && strcmp(filename, argv[0]) == 0) { // two strings are the
+                // same
+                //   is_sys_call = false;
+
+                // } else {
+                // find_filename(child_pid, filename);
+                char **const argv = (void *)regs.rsi;
+                char **const envp = (void *)regs.rdx;
+                printf("system call execve\n");
+                // }
+              } else {
+                is_sys_call = false;
               }
 
               break;
@@ -272,6 +338,12 @@ int main(int argc, char **argv) {
               break;
             }
 
+            case 87: {
+              const char *pathname = (void *)regs.rdi;
+              printf("system call unlink with pathname %s\n", pathname);
+              break;
+            }
+
             case 62: {
               pid_t *pid = (void *)regs.rdi;
               int sig = regs.rsi;
@@ -284,15 +356,15 @@ int main(int argc, char **argv) {
             default: { is_sys_call = false; }
           }
 
-          // if (is_sys_call == true) {
-          //   printf("terminate the child process\n");
-          //   if (kill(child_pid, SIGKILL) == -1) {
-          //     perror("kill tracee failed");
-          //     exit(2);
-          //   } else {
-          //     exit(EXIT_SUCCESS);
-          //   }
-          // }
+          if (is_sys_call == true) {
+            printf("terminate the child process\n");
+            //   if (kill(child_pid, SIGKILL) == -1) {
+            //     perror("kill tracee failed");
+            //     exit(2);
+            //   } else {
+            //     exit(EXIT_SUCCESS);
+            //   }
+          }
 
           // Print the systam call number and register values
           // The meanings of registers will depend on the system call.
