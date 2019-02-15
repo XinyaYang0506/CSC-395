@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
+// TODO: sometimes there will be null directory to openat, or unlink
 typedef struct {
   char *read;
   char *read_write;
@@ -39,14 +40,22 @@ const char *find_filename(pid_t child_pid, const char *filename) {
     }
     filename += 8;
   }
-  char real_path[PATH_MAX] = {0};
-  realpath(path, real_path);
+  char *real_path;
+  real_path = realpath(path, NULL);
   printf("PATH is %s\n", real_path);
   return real_path;
 }
 
 bool is_subdirectory(char *root, const char *dir) {
   printf("root = %s\n", root);
+  if (!dir) {
+    printf("Warning: system call is dealing with a null directory.\n");
+    return true; // when dir is null, it cannot change anything
+  }
+
+  if (!root) {
+    return false;
+  }
   while (root != NULL && dir != NULL &&
          *root != '\0') {  // not till the end of root
 
@@ -58,6 +67,27 @@ bool is_subdirectory(char *root, const char *dir) {
     dir++;
   }
   return true;
+}
+
+void check_open_flags(int flags, char *read_write, char *read,
+                      const char *filename, int *should_sandbox) {
+  if ((flags & O_RDWR) % 4 == 2) {
+    printf("Oh this program wants to read and write!\n");
+    if (read_write != NULL && is_subdirectory(read_write, filename)) {
+      *should_sandbox = false;
+    }
+  } else if ((flags & O_WRONLY) % 2 == 1) {
+    printf("Oh this program wants to write!\n");
+    if (read_write != NULL && is_subdirectory(read_write, filename)) {
+      *should_sandbox = false;
+    }
+  } else if ((flags & O_RDONLY) % 2 == 0) {
+    printf("Oh this program wants to read!\n");
+    if (read != NULL && is_subdirectory(read, filename)) {
+      *should_sandbox = false;
+    }
+  }
+  return;
 }
 // bool flagchoice(int argc, char *argv[argc], permission *perm) {
 //   unsigned int counter;
@@ -205,83 +235,64 @@ int main(int argc, char **argv) {
           // Get the system call number
           size_t syscall_num = regs.orig_rax;
           printf("sys call num is %zu\n", syscall_num);
-          int is_sys_call = 1;  // true
+          int should_sandbox = true;  // true
           switch (syscall_num) {
-            // case 0: {
-            //   unsigned int fd = regs.rdi;
-            //   size_t count = regs.rdx;
-            //   printf("system call read with fd %u\n", fd);
-            //   break;
-            // }
+              // case 0: {
+              //   unsigned int fd = regs.rdi;
+              //   size_t count = regs.rdx;
+              //   printf("system call read with fd %u\n", fd);
+              //   break;
+              // }
 
-            // case 1: {
-            //   unsigned int fd = regs.rdi;
-            //   size_t count = regs.rdx;
-            //   printf("system call write with fd %u\n", fd);
-            //   break;
-            // }
+              // case 1: {
+              //   unsigned int fd = regs.rdi;
+              //   size_t count = regs.rdx;
+              //   printf("system call write with fd %u\n", fd);
+              //   break;
+              // }
 
-            case 2: {
+            case 2: {  // open
               const char *filename = (void *)regs.rdi;
               int flags = regs.rsi;
               filename = find_filename(child_pid, filename);
-              if ((flags & O_RDWR) % 4 == 2) {
-                printf("Oh this program wants to read and write!\n");
-                if (perm.read_write != NULL &&
-                    is_subdirectory(perm.read_write, filename)) {
-                  is_sys_call = false;
-                }
-              } else if ((flags & O_WRONLY) % 2 == 1) {
-                printf("Oh this program wants to write!\n");
-                if (perm.read_write != NULL &&
-                    is_subdirectory(perm.read_write, filename)) {
-                  is_sys_call = false;
-                }
-              } else if ((flags & O_RDONLY) % 2 == 0) {
-                printf("Oh this program wants to read!\n");
-                if (perm.read != NULL && is_subdirectory(perm.read, filename)) {
-                  is_sys_call = false;
-                }
-              }
+              check_open_flags(flags, perm.read_write, perm.read, filename,
+                               &should_sandbox);
+              free((void *)filename);
               // mode_t mode = regs.rdx;
               printf("system call open\n");
               break;
             }
 
-            case 257: {
+            case 257: {  // openat
               const char *filename = (void *)regs.rsi;
               int flags = regs.rdx;
               filename = find_filename(child_pid, filename);
-              if ((flags & O_RDWR) % 4 == 2) {
-                printf("Oh this program wants to read and write!\n");
-                if (perm.read_write != NULL &&
-                    is_subdirectory(perm.read_write, filename)) {
-                  is_sys_call = false;
-                }
-              } else if ((flags & O_WRONLY) % 2 == 1) {
-                printf("Oh this program wants to write!\n");
-                if (perm.read_write != NULL &&
-                    is_subdirectory(perm.read_write, filename)) {
-                  is_sys_call = false;
-                }
-              } else if ((flags & O_RDONLY) % 2 == 0) {
-                printf("Oh this program wants to read!\n");
-                if (perm.read != NULL && is_subdirectory(perm.read, filename)) {
-                  is_sys_call = false;
-                }
-              }
+              check_open_flags(flags, perm.read_write, perm.read, filename,
+                               &should_sandbox);
+              free((void *)filename);
               // mode_t mode = regs.rdx;
-              printf("system call open\n");
+              printf("system call openat\n");
               break;
             }
 
-            // case 3: {
-            //   unsigned int fd = regs.rdi;
-            //   printf("system call close with fd %u\n", fd);
-            //   break;
-            // }
+              // case 3: {
+              //   unsigned int fd = regs.rdi;
+              //   printf("system call close with fd %u\n", fd);
+              //   break;
+              // }
 
-            case 41: {
+            case 87: {  // remove file
+              const char *filename = (void *)regs.rdi;
+              filename = find_filename(child_pid, filename);
+              if (is_subdirectory(perm.read_write, filename)) {
+                should_sandbox = false;
+              }
+              printf("system call unlink with filename %s\n", filename);
+              free((void *)filename);
+              break;
+            }
+
+            case 41: {  // socket
               int family = regs.rdi;
               int type = regs.rsi;
               int protocol = regs.rdx;
@@ -289,17 +300,42 @@ int main(int argc, char **argv) {
               break;
             }
 
-            case 59: {
+            case 80: {  // change directory
+              const char *filename = (void *)regs.rdi;
+              printf("system call chdir with filename %s\n", filename);
+              break;
+            }
+
+            case 83: {  // make diretory
+              const char *filename = (void *)regs.rdi;
+              mode_t mode = regs.rsi;
+              printf("system call mkdir with filename %s\n", filename);
+              break;
+            }
+
+            case 84: {  // remove directory
+              const char *filename = (void *)regs.rdi;
+              printf("system call rmdir with filename %s\n", filename);
+              break;
+            }
+
+            case 62: {  // send signal
+              pid_t *pid = (void *)regs.rdi;
+              int sig = regs.rsi;
+              printf("system call kill with signal %d\n", sig);
+              break;
+            }
+
+            case 59: {  // exec
               if (!perm.exec) {
                 const char *filename = (void *)regs.rdi;
-                // strange error
 
                 if (filename) {
                   printf("first exec is %s\n", filename);
                 }
                 // && strcmp(filename, argv[0]) == 0) { // two strings are the
                 // same
-                //   is_sys_call = false;
+                //   should_sandbox = false;
 
                 // } else {
                 // find_filename(child_pid, filename);
@@ -308,55 +344,25 @@ int main(int argc, char **argv) {
                 printf("system call execve\n");
                 // }
               } else {
-                is_sys_call = false;
+                should_sandbox = false;
               }
 
               break;
             }
 
-            case 57: {
-              printf("system call fork\n");
+            case 57: {  // fork
+              if (!perm.fork) {
+                printf("system call fork\n");
+              } else {
+                should_sandbox = false;
+              }
               break;
             }
 
-            case 80: {
-              const char *filename = (void *)regs.rdi;  // not correct
-              printf("system call chdir with filename %s\n", filename);
-              break;
-            }
-
-            case 83: {
-              const char *pathname = (void *)regs.rdi;
-              mode_t mode = regs.rsi;
-              printf("system call mkdir with pathname %s\n", pathname);
-              break;
-            }
-
-            case 84: {
-              const char *pathname = (void *)regs.rdi;
-              printf("system call rmdir with pathname %s\n", pathname);
-              break;
-            }
-
-            case 87: {
-              const char *pathname = (void *)regs.rdi;
-              printf("system call unlink with pathname %s\n", pathname);
-              break;
-            }
-
-            case 62: {
-              pid_t *pid = (void *)regs.rdi;
-              int sig = regs.rsi;
-              printf("system call kill with signal %d\n", sig);
-              break;
-            }
-
-              // dont know the system call for removing the files
-
-            default: { is_sys_call = false; }
+            default: { should_sandbox = false; }
           }
 
-          if (is_sys_call == true) {
+          if (should_sandbox == true) {
             printf("terminate the child process\n");
             //   if (kill(child_pid, SIGKILL) == -1) {
             //     perror("kill tracee failed");
