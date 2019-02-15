@@ -12,12 +12,15 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 // TODO: sometimes there will be null directory to openat, or unlink
 typedef struct {
   char *read;
   char *read_write;
-  bool exec;
-  bool fork;
+  bool can_socket;
+  bool can_signal;
+  bool can_exec;
+  bool can_fork;
 } permission;
 
 const char *find_filename(pid_t child_pid, const char *filename) {
@@ -50,7 +53,7 @@ bool is_subdirectory(char *root, const char *dir) {
   printf("root = %s\n", root);
   if (!dir) {
     printf("Warning: system call is dealing with a null directory.\n");
-    return true; // when dir is null, it cannot change anything
+    return true;  // when dir is null, it cannot change anything
   }
 
   if (!root) {
@@ -125,11 +128,13 @@ int main(int argc, char **argv) {
   permission perm;
   perm.read = NULL;
   perm.read_write = NULL;
-  perm.exec = false;
-  perm.fork = false;
+  perm.can_socket = false;
+  perm.can_exec = false;
+  perm.can_fork = false;
+  perm.can_signal = false;
 
   int opt;
-  while ((opt = getopt(argc, argv, "r:w:ef")) != -1) {
+  while ((opt = getopt(argc, argv, "r:w:sef")) != -1) {
     switch (opt) {
       case 'r':
         perm.read =
@@ -142,11 +147,17 @@ int main(int argc, char **argv) {
       case ':':  //!!!!!!TODO: cannot detect missing argument
         printf("missing argument %c\n", optopt);
         break;
+      case 's':
+        perm.can_socket = true;
+        break;
+      case 'g':
+        perm.can_signal = true;
+        break;
       case 'e':
-        perm.exec = true;
+        perm.can_exec = true;
         break;
       case 'f':
-        perm.fork = true;
+        perm.can_fork = true;
         break;
     }
   }
@@ -154,9 +165,10 @@ int main(int argc, char **argv) {
   printf("child: %s\n", argv[optind + 1]);
   printf("read: %s\n", perm.read);
   printf("write: %s\n", perm.read_write);
-  printf("exec: %d\n", perm.exec);
-  printf("fork: %d\n", perm.fork);
-
+  printf("can_exec: %d\n", perm.can_exec);
+  printf("can_fork: %d\n", perm.can_fork);
+  printf("can_signal: %d\n", perm.can_signal);
+  printf("can_socket: %d\n", perm.can_socket);
   // Call fork to create a child process
   pid_t child_pid = fork();
   if (child_pid == -1) {
@@ -197,7 +209,16 @@ int main(int argc, char **argv) {
     // Now repeatedly resume and trace the program
     bool running = true;
     int last_signal = 0;
+    bool after_first_exec = false;
     while (running) {
+      // Set the tracee to stop at the next exec and let the tracer to check
+      // this status
+      if (ptrace(PTRACE_SETOPTIONS, child_pid, NULL, PTRACE_O_TRACEEXEC) ==
+          -1) {
+        perror("ptrace traceme failed");
+        exit(2);
+      }
+
       // Continue the process, delivering the last signal we received (if any)
       if (ptrace(PTRACE_SYSCALL, child_pid, NULL, last_signal) == -1) {
         perror("ptrace CONT failed");
@@ -219,7 +240,10 @@ int main(int argc, char **argv) {
       } else if (WIFSIGNALED(status)) {
         printf("Child terminated with signal %d\n", WTERMSIG(status));
         running = false;
-      } else if (WIFSTOPPED(status)) {
+      } else if (status >> 8 == (SIGTRAP | (PTRACE_EVENT_EXEC << 8))) {
+        printf("got the first exec\n");
+        after_first_exec = true;
+      } else if (after_first_exec && WIFSTOPPED(status)) {
         // Get the signal delivered to the child
         last_signal = WSTOPSIG(status);
 
@@ -235,6 +259,8 @@ int main(int argc, char **argv) {
           // Get the system call number
           size_t syscall_num = regs.orig_rax;
           printf("sys call num is %zu\n", syscall_num);
+          printf("rax is 0x%llx\n", regs.rax); // it is not 0???
+          printf("orig_rax is 0x%llx\n", regs.orig_rax);
           int should_sandbox = true;  // true
           switch (syscall_num) {
               // case 0: {
@@ -251,7 +277,7 @@ int main(int argc, char **argv) {
               //   break;
               // }
 
-            case 2: {  // open
+            case SYS_open: {  // open
               const char *filename = (void *)regs.rdi;
               int flags = regs.rsi;
               filename = find_filename(child_pid, filename);
@@ -263,25 +289,21 @@ int main(int argc, char **argv) {
               break;
             }
 
-            case 257: {  // openat
+            case SYS_openat: {  // openat
               const char *filename = (void *)regs.rsi;
               int flags = regs.rdx;
+              unsigned long long int return_value = regs.rax;
               filename = find_filename(child_pid, filename);
               check_open_flags(flags, perm.read_write, perm.read, filename,
                                &should_sandbox);
               free((void *)filename);
               // mode_t mode = regs.rdx;
+              printf("SYS_openat is %d\n", SYS_openat);
               printf("system call openat\n");
               break;
             }
 
-              // case 3: {
-              //   unsigned int fd = regs.rdi;
-              //   printf("system call close with fd %u\n", fd);
-              //   break;
-              // }
-
-            case 87: {  // remove file
+            case SYS_unlink: {  // remove file
               const char *filename = (void *)regs.rdi;
               filename = find_filename(child_pid, filename);
               if (is_subdirectory(perm.read_write, filename)) {
@@ -292,55 +314,67 @@ int main(int argc, char **argv) {
               break;
             }
 
-            case 41: {  // socket
-              int family = regs.rdi;
-              int type = regs.rsi;
-              int protocol = regs.rdx;
-              printf("system call socket with type %d\n", type);
-              break;
-            }
-
-            case 80: {  // change directory
+            case SYS_chdir: {  // change directory
               const char *filename = (void *)regs.rdi;
+              filename = find_filename(child_pid, filename);
+              if (is_subdirectory(perm.read, filename) ||
+                  is_subdirectory(perm.read_write, filename)) {
+                should_sandbox = false;
+              }
               printf("system call chdir with filename %s\n", filename);
+              free((void *)filename);
               break;
             }
 
-            case 83: {  // make diretory
+            case SYS_mkdir: {  // make diretory
               const char *filename = (void *)regs.rdi;
-              mode_t mode = regs.rsi;
+              filename = find_filename(child_pid, filename);
+              if (is_subdirectory(perm.read_write, filename)) {
+                should_sandbox = false;
+              }
               printf("system call mkdir with filename %s\n", filename);
+              free((void *)filename);
               break;
             }
 
-            case 84: {  // remove directory
+            case SYS_rmdir: {  // remove directory
               const char *filename = (void *)regs.rdi;
+              filename = find_filename(child_pid, filename);
+              if (is_subdirectory(perm.read_write, filename)) {
+                should_sandbox = false;
+              }
               printf("system call rmdir with filename %s\n", filename);
+              free((void *)filename);
               break;
             }
 
-            case 62: {  // send signal
+            case SYS_socket: {  // socket
+              if (!perm.can_socket) {
+                int family = regs.rdi;
+                int type = regs.rsi;
+                int protocol = regs.rdx;
+                printf("system call socket with type %d\n", type);
+              } else {
+                should_sandbox = false;
+              }
+              break;
+            }
+            case SYS_kill: {  // send signal
               pid_t *pid = (void *)regs.rdi;
               int sig = regs.rsi;
               printf("system call kill with signal %d\n", sig);
               break;
             }
 
-            case 59: {  // exec
-              if (!perm.exec) {
+            case SYS_execve: {  // exec
+              if (!perm.can_exec) {
                 const char *filename = (void *)regs.rdi;
-
-                if (filename) {
-                  printf("first exec is %s\n", filename);
-                }
-                // && strcmp(filename, argv[0]) == 0) { // two strings are the
-                // same
-                //   should_sandbox = false;
-
-                // } else {
-                // find_filename(child_pid, filename);
+                filename = find_filename(child_pid, filename);
                 char **const argv = (void *)regs.rsi;
                 char **const envp = (void *)regs.rdx;
+                if (!filename) {
+                  should_sandbox = false;
+                }
                 printf("system call execve\n");
                 // }
               } else {
@@ -350,8 +384,8 @@ int main(int argc, char **argv) {
               break;
             }
 
-            case 57: {  // fork
-              if (!perm.fork) {
+            case SYS_fork: {  // fork
+              if (!perm.can_fork) {
                 printf("system call fork\n");
               } else {
                 should_sandbox = false;
@@ -359,6 +393,11 @@ int main(int argc, char **argv) {
               break;
             }
 
+            // TODO: Find the option PTRACE_SETREGS to change the return value
+            // of sys calls, but, how to know which syscall do we have when the
+            // child is trying to exit?
+            // TODO: The calls come in pairs! Can I use the second to tell the
+            // return value?
             default: { should_sandbox = false; }
           }
 
@@ -372,23 +411,7 @@ int main(int argc, char **argv) {
             //   }
           }
 
-          // Print the systam call number and register values
-          // The meanings of registers will depend on the system call.
           // Refer to the table at https://filippo.io/linux-syscall-table/
-          // printf("Program made system call %lu.\n", syscall_num);
-          // printf("  %%rdi: 0x%llx\n", regs.rdi);
-          // printf("  %%rsi: 0x%llx\n", regs.rsi);
-          // printf("  %%rdx: 0x%llx\n", regs.rdx);
-          // printf("  ...\n");
-
-          // char cwd[PATH_MAX];
-          // if (getcwd(cwd, sizeof(cwd)) != NULL) {
-          //   printf("Current working dir: %s\n", cwd);
-          // } else {
-          //   perror("getcwd() error");
-          //   exit(2);
-          //   return 1;
-          // }
 
           last_signal = 0;
         }
