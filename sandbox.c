@@ -10,9 +10,14 @@
 #include <unistd.h>
 
 #include <fcntl.h>
-#include <limits.h>
+#include <sys/limits.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+
+extern char *optarg;
+extern int optind, opterr, optopt;
+
 // TODO: sometimes there will be null directory to openat, or unlink
 typedef struct {
   char *read;
@@ -232,20 +237,6 @@ int main(int argc, char **argv) {
           printf("orig_rax is 0x%llx\n", regs.orig_rax);
           int should_sandbox = true;  // true
           switch (syscall_num) {
-              // case 0: {
-              //   unsigned int fd = regs.rdi;
-              //   size_t count = regs.rdx;
-              //   printf("system call read with fd %u\n", fd);
-              //   break;
-              // }
-
-              // case 1: {
-              //   unsigned int fd = regs.rdi;
-              //   size_t count = regs.rdx;
-              //   printf("system call write with fd %u\n", fd);
-              //   break;
-              // }
-
             case SYS_open: {  // open
               const char *filename = (void *)regs.rdi;
               int flags = regs.rsi;
@@ -345,7 +336,6 @@ int main(int argc, char **argv) {
                   should_sandbox = false;
                 }
                 printf("system call execve\n");
-                // }
               } else {
                 should_sandbox = false;
               }
