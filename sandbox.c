@@ -92,37 +92,6 @@ void check_open_flags(int flags, char *read_write, char *read,
   }
   return;
 }
-// bool flagchoice(int argc, char *argv[argc], permission *perm) {
-//   unsigned int counter;
-//   for (counter = 1; argv[counter] != NULL; counter++) {
-//     // Verifies if User inserted Flag
-//     if (*(argv[counter]) != '-' || *(argv[counter] + 1) != '-') {
-//       fprintf(stderr, "Please give a -- flag\n");
-//       perror("No proper flag");
-//       exit(2);
-//     }
-
-//     // Parse flags
-//     if (strcmp((argv[counter] + 2), "read") { //compare the string start from
-//     index 2
-//       if ()
-//     }
-//     switch (*(argv[counter] + 1)) {
-//       case 'r':
-//         if (r_flag(argv, input, &counter) == false) return false;
-//         break;
-//       case 'w':
-//         if (w_flag(argv, output, &counter) == false) return false;
-//         break;
-//       default:  // Informs User of invalid flag
-//       {
-//         fprintf(stderr, "Invalid flag.\n");
-//         return false;
-//       } break;
-//     }  // switch
-//   }    // for
-//   return true;
-// }
 
 int main(int argc, char **argv) {
   permission perm;
@@ -259,7 +228,7 @@ int main(int argc, char **argv) {
           // Get the system call number
           size_t syscall_num = regs.orig_rax;
           printf("sys call num is %zu\n", syscall_num);
-          printf("rax is 0x%llx\n", regs.rax); // it is not 0???
+          printf("rax is 0x%llx\n", regs.rax);  // it is not 0???
           printf("orig_rax is 0x%llx\n", regs.orig_rax);
           int should_sandbox = true;  // true
           switch (syscall_num) {
