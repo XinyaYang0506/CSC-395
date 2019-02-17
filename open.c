@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 int main() {
-  char filename[100] = "./m.log";
+  char filename[100] = "./sand.c";
   char filename2[100] = "./test";
   printf("filename address is %p\n", filename);
   if (open(filename, O_WRONLY | O_CREAT, S_IRWXU) == -1) {
