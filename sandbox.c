@@ -9,18 +9,19 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <error.h>
 #include <fcntl.h>
 #include <linux/limits.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <error.h>
 
 extern char *optarg;
 extern int optind, opterr, optopt;
 #define MAX_DIR 3
 
 // TODO: sometimes there will be null directory to openat, or unlink
+// TODO: I cannot do tracefork, ask charlie tomorrow
 typedef struct {
   char *read[MAX_DIR];
   int counter_read;
@@ -33,6 +34,7 @@ typedef struct {
 } permission;
 
 const char *find_filename(pid_t child_pid, const char *filename) {
+  printf("get here\n");
   bool string_end = false;
   int counter = 0;
   char path[PATH_MAX] = {0};
@@ -40,7 +42,7 @@ const char *find_filename(pid_t child_pid, const char *filename) {
     for (int i = 0; !string_end && i < 64; i += 8) {
       char c = (char)(ptrace(PTRACE_PEEKDATA, child_pid, filename, NULL) >>
                       i);  // TODO: why it is in reverse?
-      if (c < 32 || c > 126) {
+      if (c != '\0' && (c < 32 || c > 126)) {
         return NULL;
       }
       if (c == '\0') {
@@ -227,13 +229,17 @@ int main(int argc, char **argv) {
     bool running = true;
     int last_signal = 0;
     bool after_first_exec = false;
-    
     while (running) {
       // printf("test 273: %s\n", perm.read[0]);
       // Set the tracee to stop at the next exec and let the tracer to check
       // this status
       // printf("in sandbox parent, childpid = %d\n", child_pid);
-
+      if (ptrace(PTRACE_SETOPTIONS, child_pid, NULL,
+                 PTRACE_O_TRACEEXEC) == -1) {  //| PTRACE_O_TRACEFORK
+        // printf("in error message child pid is %d\n", child_pid);
+        perror("ptrace exec.fork failed");
+        exit(2);
+      }
 
       // Set the tracee to stop at the next dork and let the tracer to check
       // this status
@@ -311,7 +317,7 @@ int main(int argc, char **argv) {
               int flags = regs.rdx;
               unsigned long long int return_value = regs.rax;
               filename = find_filename(child_pid, filename);
-              // printf("test: %s \n", perm.read[0]);
+              printf("test: %s \n", filename);
               check_open_flags(flags, perm, filename, &should_sandbox);
               free((void *)filename);
               // mode_t mode = regs.rdx;
@@ -412,6 +418,8 @@ int main(int argc, char **argv) {
               break;
             }
 
+            case SYS_vfork:
+            case SYS_clone:
             case SYS_fork: {  // fork
               if (!perm.can_fork) {
                 printf("system call fork\n");

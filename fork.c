@@ -17,6 +17,7 @@
 
 int main(int argc, char **argv) {
   printf("I am a fork program\n");
+
   // Call fork to create a child process
   pid_t child_pid = fork();
   if (child_pid == -1) {

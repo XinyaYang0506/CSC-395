@@ -1,11 +1,12 @@
 CC := clang
 CFLAGS := -g -Wall -Werror
 
-all: sandbox	mysh open fork
+all: sandbox mysh open fork
 
 clean:
 	rm -rf mysh mysh.dSYM
-	rm -rf sanbox sandbox.dSYM
+	rm -rf sandbox sandbox.dSYM
+	rm -rf fork fork.dSYM
 	rm *.log
 
 mysh: mysh.c
