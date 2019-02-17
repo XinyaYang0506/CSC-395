@@ -10,18 +10,21 @@
 #include <unistd.h>
 
 #include <fcntl.h>
-#include <sys/limits.h>
+#include <linux/limits.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 
 extern char *optarg;
 extern int optind, opterr, optopt;
+#define MAX_DIR 100
 
 // TODO: sometimes there will be null directory to openat, or unlink
 typedef struct {
-  char *read;
-  char *read_write;
+  char *read[MAX_DIR];
+  int counter_read;
+  char *read_write[MAX_DIR];
+  int counter_read_write;
   bool can_socket;
   bool can_signal;
   bool can_exec;
@@ -35,7 +38,7 @@ const char *find_filename(pid_t child_pid, const char *filename) {
   while (!string_end && counter < PATH_MAX) {
     for (int i = 0; !string_end && i < 64; i += 8) {
       char c = (char)(ptrace(PTRACE_PEEKDATA, child_pid, filename, NULL) >>
-                      i);  // why it is in reverse?
+                      i);  // TODO: why it is in reverse?
       // if (c < 32 || c > 126) {
       //   return NULL;
       // }
@@ -50,48 +53,61 @@ const char *find_filename(pid_t child_pid, const char *filename) {
   }
   char *real_path;
   real_path = realpath(path, NULL);
+  if (!real_path) {
+    printf("Warning: system call is dealing with a null directory.\n");
+  }
   printf("PATH is %s\n", real_path);
   return real_path;
 }
 
-bool is_subdirectory(char *root, const char *dir) {
-  printf("root = %s\n", root);
+bool is_subdirectory(char *root[MAX_DIR], const int counter, const char *dir) {
+  //  printf("is_sub_dir test: %s and %s\n", root[0], root[1]);
   if (!dir) {
     printf("Warning: system call is dealing with a null directory.\n");
     return true;  // when dir is null, it cannot change anything
   }
-
-  if (!root) {
-    return false;
-  }
-  while (root != NULL && dir != NULL &&
-         *root != '\0') {  // not till the end of root
-
-    if (*dir != *root) {  // there is difference between dir and root
-      return false;
+  // printf("HERE!\n");
+  for (int i = 0; i < counter; i++) {
+    char *cur_root = root[i];
+    const char *cur_dir = dir;
+    //  printf("is_subdir: %s\n", cur_root);
+    if (cur_root) {
+      // printf("is_subdir: %s\n", cur_root);
+      while (*cur_root != '\0') {  // not till the end of root
+        if (*cur_dir !=
+            *cur_root) {  // there is difference between dir and root
+                          //  printf("cur char: %c\n", *cur_root);
+          break;          // go to the next element in the array
+        }
+        cur_root++;
+        cur_dir++;
+      }
+      printf("get to here!\n");
+      if (*cur_root == '\0') {
+        printf("why are you here\n");
+        return true;
+      }
     }
-
-    root++;
-    dir++;
   }
-  return true;
+  return false;
 }
 
-void check_open_flags(int flags, char *read_write, char *read,
-                      const char *filename, int *should_sandbox) {
+void check_open_flags(int flags, permission perm, const char *filename,
+                      int *should_sandbox) {
   if ((flags & O_RDWR) % 4 == 2) {
     printf("Oh this program wants to read and write!\n");
-    if (read_write != NULL && is_subdirectory(read_write, filename)) {
+    if (is_subdirectory(perm.read_write, perm.counter_read_write, filename)) {
       *should_sandbox = false;
     }
   } else if ((flags & O_WRONLY) % 2 == 1) {
     printf("Oh this program wants to write!\n");
-    if (read_write != NULL && is_subdirectory(read_write, filename)) {
+    if (is_subdirectory(perm.read_write, perm.counter_read_write, filename)) {
       *should_sandbox = false;
     }
   } else if ((flags & O_RDONLY) % 2 == 0) {
     printf("Oh this program wants to read!\n");
-    if (read != NULL && is_subdirectory(read, filename)) {
+    // printf("test: %s and %s", perm.read[0], perm.read[1]);
+    if (is_subdirectory(perm.read, perm.counter_read, filename)) {
       *should_sandbox = false;
     }
   }
@@ -100,24 +116,35 @@ void check_open_flags(int flags, char *read_write, char *read,
 
 int main(int argc, char **argv) {
   permission perm;
-  perm.read = NULL;
-  perm.read_write = NULL;
+  // perm.read = [];
+  // perm.read_write = [];
   perm.can_socket = false;
   perm.can_exec = false;
   perm.can_fork = false;
   perm.can_signal = false;
+  perm.counter_read = 0;
+  perm.counter_read_write = 0;
 
   int opt;
   while ((opt = getopt(argc, argv, "r:w:sef")) != -1) {
     switch (opt) {
-      case 'r':
-        perm.read =
+      case 'r': {
+        perm.read[perm.counter_read] =
             realpath(optarg, NULL);  // will be null if the address is invalid
+        // printf("getopt, read %s, %d\n", perm.read[perm.counter_read],
+        //  perm.counter_read);
+        perm.counter_read = perm.counter_read + 1;
         break;
-      case 'w':
-        perm.read_write =
+      }
+      case 'w': {
+        perm.read_write[perm.counter_read_write] =
             realpath(optarg, NULL);  // will be null if the address is invalid
+        // printf("getopt, write %s, %d\n",
+        //  perm.read_write[perm.counter_read_write],
+        //  perm.counter_read_write);
+        perm.counter_read_write = perm.counter_read_write + 1;
         break;
+      }
       case ':':  //!!!!!!TODO: cannot detect missing argument
         printf("missing argument %c\n", optopt);
         break;
@@ -135,14 +162,19 @@ int main(int argc, char **argv) {
         break;
     }
   }
-
-  printf("child: %s\n", argv[optind + 1]);
-  printf("read: %s\n", perm.read);
-  printf("write: %s\n", perm.read_write);
+  printf("Below are your config: \n");
+  printf("child program: %s\n", argv[optind + 1]);
+  for (int i = 0; i < perm.counter_read; i++) {
+    printf("can_read: %s\n", perm.read[i]);
+  }
+  for (int i = 0; i < perm.counter_read_write; i++) {
+    printf("can_write: %s\n", perm.read_write[i]);
+  }
   printf("can_exec: %d\n", perm.can_exec);
   printf("can_fork: %d\n", perm.can_fork);
   printf("can_signal: %d\n", perm.can_signal);
   printf("can_socket: %d\n", perm.can_socket);
+  printf("...\n");
   // Call fork to create a child process
   pid_t child_pid = fork();
   if (child_pid == -1) {
@@ -170,7 +202,7 @@ int main(int argc, char **argv) {
     int status;
     int result;
     do {
-      result = waitpid(child_pid, &status, 0);
+      result = waitpid(-1, &status, 0);
       if (result != child_pid) {
         perror("waitpid failed");
         exit(2);
@@ -233,16 +265,16 @@ int main(int argc, char **argv) {
           // Get the system call number
           size_t syscall_num = regs.orig_rax;
           printf("sys call num is %zu\n", syscall_num);
-          printf("rax is 0x%llx\n", regs.rax);  // it is not 0???
-          printf("orig_rax is 0x%llx\n", regs.orig_rax);
+          // printf("rax is 0x%llx\n", regs.rax);  // it is not 0???
+          // printf("orig_rax is 0x%llx\n", regs.orig_rax);
+
           int should_sandbox = true;  // true
           switch (syscall_num) {
             case SYS_open: {  // open
               const char *filename = (void *)regs.rdi;
               int flags = regs.rsi;
               filename = find_filename(child_pid, filename);
-              check_open_flags(flags, perm.read_write, perm.read, filename,
-                               &should_sandbox);
+              check_open_flags(flags, perm, filename, &should_sandbox);
               free((void *)filename);
               // mode_t mode = regs.rdx;
               printf("system call open\n");
@@ -254,8 +286,8 @@ int main(int argc, char **argv) {
               int flags = regs.rdx;
               unsigned long long int return_value = regs.rax;
               filename = find_filename(child_pid, filename);
-              check_open_flags(flags, perm.read_write, perm.read, filename,
-                               &should_sandbox);
+              // printf("test: %s and %s", perm.read[0], perm.read[1]);
+              check_open_flags(flags, perm, filename, &should_sandbox);
               free((void *)filename);
               // mode_t mode = regs.rdx;
               printf("SYS_openat is %d\n", SYS_openat);
@@ -266,7 +298,8 @@ int main(int argc, char **argv) {
             case SYS_unlink: {  // remove file
               const char *filename = (void *)regs.rdi;
               filename = find_filename(child_pid, filename);
-              if (is_subdirectory(perm.read_write, filename)) {
+              if (is_subdirectory(perm.read_write, perm.counter_read_write,
+                                  filename)) {
                 should_sandbox = false;
               }
               printf("system call unlink with filename %s\n", filename);
@@ -277,8 +310,9 @@ int main(int argc, char **argv) {
             case SYS_chdir: {  // change directory
               const char *filename = (void *)regs.rdi;
               filename = find_filename(child_pid, filename);
-              if (is_subdirectory(perm.read, filename) ||
-                  is_subdirectory(perm.read_write, filename)) {
+              if (is_subdirectory(perm.read, perm.counter_read, filename) ||
+                  is_subdirectory(perm.read_write, perm.counter_read_write,
+                                  filename)) {
                 should_sandbox = false;
               }
               printf("system call chdir with filename %s\n", filename);
@@ -289,7 +323,8 @@ int main(int argc, char **argv) {
             case SYS_mkdir: {  // make diretory
               const char *filename = (void *)regs.rdi;
               filename = find_filename(child_pid, filename);
-              if (is_subdirectory(perm.read_write, filename)) {
+              if (is_subdirectory(perm.read_write, perm.counter_read,
+                                  filename)) {
                 should_sandbox = false;
               }
               printf("system call mkdir with filename %s\n", filename);
@@ -300,7 +335,8 @@ int main(int argc, char **argv) {
             case SYS_rmdir: {  // remove directory
               const char *filename = (void *)regs.rdi;
               filename = find_filename(child_pid, filename);
-              if (is_subdirectory(perm.read_write, filename)) {
+              if (is_subdirectory(perm.read_write, perm.counter_read,
+                                  filename)) {
                 should_sandbox = false;
               }
               printf("system call rmdir with filename %s\n", filename);
@@ -319,10 +355,15 @@ int main(int argc, char **argv) {
               }
               break;
             }
+
             case SYS_kill: {  // send signal
-              pid_t *pid = (void *)regs.rdi;
-              int sig = regs.rsi;
-              printf("system call kill with signal %d\n", sig);
+              if (!perm.can_signal) {
+                pid_t *pid = (void *)regs.rdi;
+                int sig = regs.rsi;
+                printf("system call kill with signal %d\n", sig);
+              } else {
+                should_sandbox = false;
+              }
               break;
             }
 
@@ -339,7 +380,6 @@ int main(int argc, char **argv) {
               } else {
                 should_sandbox = false;
               }
-
               break;
             }
 
@@ -361,7 +401,7 @@ int main(int argc, char **argv) {
           }
 
           if (should_sandbox == true) {
-            printf("terminate the child process\n");
+            printf("warning: terminate the child process\n");
             //   if (kill(child_pid, SIGKILL) == -1) {
             //     perror("kill tracee failed");
             //     exit(2);
