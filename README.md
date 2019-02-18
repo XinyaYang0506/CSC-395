@@ -19,9 +19,10 @@ First, use ```make``` to compile sandbox. The users should use command line to t
 - ```-s```: grant socket system call; 
 - ```-g```: grant kill (send signal) system call; 
 - ```-e```: grant exec system call; 
-- ```-f```: grant fork system call; 
+- ```-f```: grant fork system call;   
+
 Because the author is awesome, so she allows users to specify multiple directories for ```-r``` and ```-w``` by typing in ```-r dir1 -r dir2``` or ```-w dir1 dir2```. Users can have up to 100 directories for ```-r``` and ```-w``` respectively.    
-Overall, if you want to run ```./test_program``` and allow open/openat ```-r``` in dir1 and dir2, open/openat ```-w``` in dir3, grant exec and kill. Then you should type: 
+Overall, if you want to run ```./test_program``` and allow open/openat ```-r``` in dir1 and dir2, open/openat ```-w``` in dir3, grant exec and kill, you should type: 
 ```
 ./sandbox -r dir1 -r dir2 -w dir3 -e -g - ./test_program
 ```
