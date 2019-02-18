@@ -231,7 +231,7 @@ int main(int argc, char **argv) {
     bool after_first_exec = false;
     while (running) {
       // printf("test 273: %s\n", perm.read[0]);
-      // Set the tracee to stop at the next exec and let the tracer to check
+      // Set the tracee to stop at the next exec and the next fork and let the tracer to check
       // this status
       // printf("in sandbox parent, childpid = %d\n", child_pid);
       if (ptrace(PTRACE_SETOPTIONS, child_pid, NULL,
@@ -240,14 +240,6 @@ int main(int argc, char **argv) {
         perror("ptrace exec.fork failed");
         exit(2);
       }
-
-      // Set the tracee to stop at the next dork and let the tracer to check
-      // this status
-      // if (ptrace(PTRACE_SETOPTIONS, child_pid, NULL, PTRACE_O_TRACEFORK) ==
-      //     -1) {
-      //   perror("ptrace traceme failed");
-      //   exit(2);
-      // }
 
       // Continue the process, delivering the last signal we received (if any)
       if (ptrace(PTRACE_SYSCALL, child_pid, NULL, last_signal) == -1) {
@@ -385,7 +377,10 @@ int main(int argc, char **argv) {
               }
               break;
             }
-
+            case SYS_tkill:
+            case SYS_tgkill: 
+            case SYS_rt_sigqueueinfo: 
+            case SYS_rt_tgsigqueueinfo: 
             case SYS_kill: {  // send signal
               if (!perm.can_signal) {
                 pid_t pid = regs.rdi;
@@ -439,12 +434,12 @@ int main(int argc, char **argv) {
 
           if (should_sandbox == true) {
             printf("warning: sandboxxxxxxx\n");
-            //   if (kill(child_pid, SIGKILL) == -1) {
-            //     perror("kill tracee failed");
-            //     exit(2);
-            //   } else {
-            //     exit(EXIT_SUCCESS);
-            //   }
+              if (kill(child_pid, SIGKILL) == -1) {
+                perror("kill tracee failed");
+                exit(2);
+              } else {
+                exit(EXIT_SUCCESS);
+              }
           }
 
           last_signal = 0;

@@ -8,9 +8,9 @@ This program blocks system calls called by the child program.
 - **mkdir:** create a directory;
 - **rmdir:** remove a directory;
 - **socket:** create an endpoint for communication;
-- **kill:** send signals to other process;
-- **execve:** replace the current process image with a new process image;
-- **fork:** create child process. 
+- **kill, tkill, tgkill, sigqueue:** send signals to other process;
+- **exec:** replace the current process image with a new process image;
+- **fork, vfork, clone:** create child process. 
 
 ## How to use sandbox
 First, use ```make``` to compile sandbox. The users should use command line to type in their config. There are 6 flags the users can use to allow certain sys calls. 
