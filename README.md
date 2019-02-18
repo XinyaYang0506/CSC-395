@@ -1,5 +1,5 @@
 # SANDBOX
-This program will block system calls required by the child program. 
+This program blocks system calls called by the child program. 
 
 ## List of default blocked sys call: 
 - **open, openat:** with O_RDONLY, O_WRONLY or O_RDWR flag;
