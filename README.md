@@ -2,15 +2,15 @@
 This program will block system calls required by the child program. 
 
 ## List of default blocked sys call: 
-- *open, openat:* with O_RDONLY, O_WRONLY or O_RDWR flag;
-- *unlink:* remove hard links or files;
-- *chdir:* change the current working directory;
-- *mkdir:* create a directory;
-- *rmdir:* remove a directory;
-- *socket:* create an endpoint for communication;
-- *kill:* send signals to other process;
-- *execve:* replace the current process image with a new process image;
-- *fork:* create child process. 
+- **open, openat:** with O_RDONLY, O_WRONLY or O_RDWR flag;
+- **unlink:** remove hard links or files;
+- **chdir:** change the current working directory;
+- **mkdir:** create a directory;
+- **rmdir:** remove a directory;
+- **socket:** create an endpoint for communication;
+- **kill:** send signals to other process;
+- **execve:** replace the current process image with a new process image;
+- **fork:** create child process. 
 
 ## How to use sandbox
 First, use ```make``` to compile sandbox. The users should use command line to type in their config. There are 6 flags the users can use to allow certain sys calls. 
@@ -29,5 +29,5 @@ Wrong command line inputs will result in undefind behavior. Also, the current ve
 
 ## Acknowledgement
 The system call registers info is from [here](https://filippo.io/linux-syscall-table/).  
-The frame of the program is provided by Charlie Curtsinger. 
+The frame of the program is provided by Charlie Curtsinger.   
 The exec handling is inspired by Garrett Wang. 
