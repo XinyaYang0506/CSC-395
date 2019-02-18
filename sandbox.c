@@ -120,7 +120,7 @@ void check_open_flags(int flags, permission perm, const char *filename,
 
 void flag_choice(int argc, char **argv, permission *perm) {
   int opt;
-  while ((opt = getopt(argc, argv, "r:w:sef")) != -1) {
+  while ((opt = getopt(argc, argv, "r:w:sgef")) != -1) {
     switch (opt) {
       case 'r': {
         perm->read[perm->counter_read] =
@@ -446,8 +446,6 @@ int main(int argc, char **argv) {
             //     exit(EXIT_SUCCESS);
             //   }
           }
-
-          // Refer to the table at https://filippo.io/linux-syscall-table/
 
           last_signal = 0;
           printf("...\n");
