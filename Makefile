@@ -1,5 +1,5 @@
 CC := clang
-CFLAGS := -g -Wall -Werror
+CFLAGS := -fsanitize=address -g
 
 all: sandbox mysh open fork
 
@@ -19,4 +19,4 @@ fork: fork.c
 	$(CC) $(CFLAGS) -o fork fork.c
 
 sandbox: sandbox.c
-	$(CC)  -o sandbox sandbox.c
+	$(CC) $(CFLAGS) -o sandbox sandbox.c
