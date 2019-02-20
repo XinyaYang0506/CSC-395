@@ -26,9 +26,20 @@ Overall, if you want to run ```./test_program``` and allow open/openat ```-r``` 
 ```
 ./sandbox -r dir1 -r dir2 -w dir3 -e -g - ./test_program
 ```
-Wrong command line inputs will result in undefind behavior. Also, the current version cannot track the processes created by ```fork()```. 
+Wrong command line inputs will result in undefind behavior. (Please forgive the ugly ptrace kill error message if you have multi-process program. I don't have enough time implementing the book keeping of the running processes. This will be the future work.)
+
+## Testing
+You can go to ./test directory and use ```make``` to build the executables. 
+- fork: There will be a parent, child, grand child process each using different system calls. Unlink, exec and open (create) can be tested here.  
+- exec: exec to ls. The purpose for this test is see whether the first exec call will be ignored if exec is not allowed. 
+- clone: test clone, a call similar to fork. I use the code online, so do not mind the warning.
+- open: open(write) and chdir can be tested here. 
+
+Notice that all the relative path appeeared in my test files are related to the directory sandbox is in.  
+There is no especial notes, ./name should work for all of them. ```sand.c``` and ```test.c``` are used for other programs. 
+I tried to sandbox emacs, ls, firefox and chromium-browser too. 
 
 ## Acknowledgement
 The system call registers info is from [here](https://filippo.io/linux-syscall-table/).  
 The frame of the program is provided by Charlie Curtsinger.   
-The exec handling is inspired by Garrett Wang. 
+The exec handling and sleep trick are inspired by Garrett Wang. 
