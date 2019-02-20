@@ -24,7 +24,7 @@ First, use ```make``` to compile sandbox. The users should use command line to t
 Because the author is awesome, so she allows users to specify multiple directories for ```-r``` and ```-w``` by typing in ```-r dir1 -r dir2``` or ```-w dir1 dir2```. Users can have up to 100 directories for ```-r``` and ```-w``` respectively.    
 Overall, if you want to run ```./test_program``` and allow open/openat ```-r``` in dir1 and dir2, open/openat ```-w``` in dir3, grant exec and kill, you should type: 
 ```
-./sandbox -r dir1 -r dir2 -w dir3 -e -g - ./test_program
+./sandbox -r dir1 -r dir2 -w dir3 -e -g - ./test_program args
 ```
 Wrong command line inputs will result in undefind behavior. (Please forgive the ugly ptrace kill error message if you have multi-process program. I don't have enough time implementing the book keeping of the running processes. This will be the future work.)
 
