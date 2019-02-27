@@ -15,11 +15,25 @@ static long perf_event_open(struct perf_event_attr* hw_event, pid_t pid, int cpu
 }
 
 void run_profiler(pid_t child_pid, int perf_fd) {
-  // TODO: Process samples in the perf_event file
 
+    struct perf_event_mmap_page * p;
+  mmap(p, sizeof(page)*17, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+ uint_64 data_tail = p->data_tail;
+  
   // Instead of profiling, just wait for the child to exit
   int status;
-  while(waitpid(child_pid, &status, 0) != -1 && !WIFEXITED(status) && !WIFSIGNALED(status)) {}
+  while(waitpid(child_pid, &status, 0) != -1 && !WIFEXITED(status) && !WIFSIGNALED(status)) {
+  uint_64 data_head = p->data_head;
+  // do some math to determine whether there is a new record
+  if (has_next_record){
+    //get that chunk of data
+    //parse it
+    //get the thread id and instruction pointer
+    //record the function name
+    //bye
+  }
+  
+  }
 
   // Print the count of events from perf_event
   printf("\nProfiler Output:\n");

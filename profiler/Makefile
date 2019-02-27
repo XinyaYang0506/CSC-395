@@ -1,11 +1,14 @@
 CXX := clang++
-CXXFLAGS := -g -Wall
+CXXFLAGS := --std=c++11 -g -Wall $(shell pkg-config --libs --cflags libelf++ libdwarf++)
 
 all: profiler
 
 clean:
 	rm -rf profiler
 
-profiler: profiler.cc
+profiler: profiler.cc inspect.h
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+inspect: inspect.cc
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
