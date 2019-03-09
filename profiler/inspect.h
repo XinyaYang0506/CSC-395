@@ -26,7 +26,7 @@ static const char* find_subprogram(intptr_t search_addr, const dwarf::die& node)
     if(low_pc <= search_addr && high_pc > search_addr) {
       return node[dwarf::DW_AT::name].as_cstr();
     }
-  }
+  } 
 
   for(auto& child: node) {
     const char* result = find_subprogram(search_addr, child);
@@ -94,8 +94,13 @@ static const char* address_to_function(pid_t pid, void* addr) {
       search_address -= start_addr;
     }
 
-    dwarf_map.emplace(mapped_file, dwarf::elf::create_loader(f));
-    d = dwarf_map.find(mapped_file);
+
+    try {
+      dwarf_map.emplace(mapped_file, dwarf::elf::create_loader(f));
+      d = dwarf_map.find(mapped_file);
+    } catch(dwarf::format_error e) {
+      return NULL;
+    }
 
     // Just to be sure, make sure we actually inserted
     if(d == dwarf_map.end()) return NULL;
