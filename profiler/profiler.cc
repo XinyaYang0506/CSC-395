@@ -13,12 +13,15 @@
 #include <unistd.h>
 
 #include <iostream>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include "inspect.h"
 using std::string;
 using std::tuple;
+using std::unique_ptr;
 using std::unordered_map;
+
 struct sample_record {
   uint64_t ip;
   uint32_t pid;
@@ -39,87 +42,102 @@ struct exit_record {
   uint32_t ptid;
   uint64_t time;
 };
-
-typedef struct every_perf {
-  int perf_fd;
-  void* buffer;
-  perf_event_mmap_page* mmap_header;
-  void* data;
-  unordered_map<string, int>* function_map;
-} every_perf_t;
+using funcMap = unordered_map<string, int>;
 
 // general numeric constants (got from alex)
 enum : size_t {
   PAGE_SIZE = 0x1000LL,
   NUM_DATA_PAGES = 256,
-  PERIOD = 10000000000
+  PERIOD = 100000000
 };
+
+class every_perf {
+ public:
+  int perf_fd;
+  void* buffer;
+  perf_event_mmap_page* mmap_header;
+  void* data;
+  funcMap function_map;
+
+  every_perf(int perf_fd) {
+    this->perf_fd = perf_fd;
+    buffer = mmap(nullptr, (1 + NUM_DATA_PAGES) * PAGE_SIZE,
+                  PROT_READ | PROT_WRITE, MAP_SHARED, perf_fd, 0);
+    mmap_header = static_cast<perf_event_mmap_page*>(buffer);
+    data = reinterpret_cast<void*>(reinterpret_cast<char*>(buffer) + PAGE_SIZE);
+    function_map = funcMap();
+    function_map.insert({"all", 0});
+  }
+
+  void add_record(string sfname) {
+    funcMap::iterator got = function_map.find(sfname);
+    function_map.at("all") += 1;
+    if (got == function_map.end()) {
+      function_map.insert({sfname, 1});
+    } else {
+      got->second = got->second + 1;
+    }
+  }
+
+  void report() {
+    int total = function_map.at("all");
+    function_map.erase("all");
+
+    std::cout << "function amount: " << function_map.size()
+              << " total: " << total << std::endl;
+
+    for (auto record : function_map) {
+      std::cout << record.first << " : " << (int) (record.second * 100.0 / total)
+                << "%" << std::endl;
+    }
+  }
+};
+
+using e_pMap = unordered_map<pid_t, every_perf>;
 static long perf_event_open(struct perf_event_attr* hw_event, pid_t pid,
                             int cpu, int group_fd, unsigned long flags) {
   return syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
 }
 
 void get_next_record(struct perf_event_mmap_page* mmap_header, void* data,
-                     unordered_map<pid_t, every_perf_t*>* perf_fd_map) {
+                     e_pMap* e_p_map) {
   auto* event_header = reinterpret_cast<perf_event_header*>(
       static_cast<char*>(data) +
       ((mmap_header->data_tail) % (mmap_header->data_size)));
   mmap_header->data_tail += event_header->size;
   uint32_t type = event_header->type;
-  std::cout << "type: " << type << std::endl;
-  if (type == PERF_RECORD_SAMPLE) {
-    sample_record* event_data = reinterpret_cast<sample_record*>(
+  // std::cout << __func__ << "::"<< __LINE__ << " record type: " << type <<
+  // std::endl;
+  if (type == PERF_RECORD_SAMPLE) {  // == 9
+    auto* event_data = reinterpret_cast<sample_record*>(
         reinterpret_cast<char*>(event_header) + sizeof(perf_event_header));
-    std::cout << "69" << std::endl;
+    // std::cout << __LINE__ << " record sample" << std::endl;
     const char* fname =
         address_to_function(static_cast<pid_t>(event_data->pid),
                             reinterpret_cast<void*>(event_data->ip));
     if (fname != NULL) {
       string sfname(fname);
-      std::cout << "75" << std::endl;
       pid_t tid = static_cast<pid_t>(event_data->tid);
-      std::cout << "tid: " << tid << std::endl;
-      unordered_map<string, int>* function_map =
-          perf_fd_map->at(tid)->function_map;
-      std::cout << perf_fd_map->at(tid)->perf_fd << std::endl;
-      std::cout << "80" << function_map->at("all") << std::endl;
-      unordered_map<string, int>::iterator got = function_map->find(sfname);
-      std::cout << "80.5" << std::endl;
-      function_map->at("all") += 1;
-      std::cout << "81" << std::endl;
-      if (got == function_map->end()) {
-        std::pair<string, int> record(sfname, 1);
-        function_map->insert(record);
-        std::cout << "tid: " << tid << record.first << " has " << record.second
-                  << "\n";
-      } else {
-        got->second = got->second + 1;
-        std::cout << "tid: " << tid << got->first << " has " << got->second
-                  << "\n";
-      }
+      e_p_map->at(tid).add_record(sfname);
     }
-  } else if (type == PERF_RECORD_EXIT) {
-    exit_record* event_data = reinterpret_cast<exit_record*>(
+  } else if (type == PERF_RECORD_EXIT) {  // == 4
+    auto* event_data = reinterpret_cast<exit_record*>(
         reinterpret_cast<char*>(event_header) + sizeof(perf_event_header));
     pid_t tid = static_cast<pid_t>(event_data->tid);
-    unordered_map<string, int>* function_map =
-        perf_fd_map->at(tid)->function_map;
-    int total = function_map->at("all");
-    function_map->erase("all");
-    for (auto record : *function_map) {
-      std::cout << record.first << " : " << (record.second * 100.0 / total)
-                << "%" << std::endl;
-    }
 
-    perf_fd_map->erase(tid);
-    if (perf_fd_map->empty()) {
+    std::cout << "result of tid: " << tid << std::endl;
+    e_p_map->at(tid).report();
+    e_p_map->erase(tid);
+    std::cout << __func__ << " " << __LINE__
+              << " e_p_map.size() == " << e_p_map->size() << std::endl;
+    if (e_p_map->empty()) {
       exit(EXIT_SUCCESS);
     }
-  } else if (type == PERF_RECORD_FORK) {
-    fork_record* event_data = reinterpret_cast<fork_record*>(
+  } else if (type == PERF_RECORD_FORK) {  // == 7
+    auto* event_data = reinterpret_cast<fork_record*>(
         reinterpret_cast<char*>(event_header) + sizeof(perf_event_header));
-    std::cout << "pid" << event_data->pid << " "
-              << "tid" << event_data->tid << std::endl;
+    std::cout << __LINE__ << " fork record: pid " << event_data->pid << " "
+              << "tid " << event_data->tid << std::endl;
 
     // Set up perf_event for the new process
     struct perf_event_attr attr = {
@@ -134,50 +152,44 @@ void get_next_record(struct perf_event_mmap_page* mmap_header, void* data,
         .exclude_kernel = 1,  // Do not take samples in the kernel
         .exclude_hv = 1       // Do not take samples in the hypervisor
     };
-    std::cout << "127" << std::endl;
+    // std::cout << __LINE__ << std::endl;
     int perf_fd = perf_event_open(&attr, event_data->tid, -1, -1, 0);
     if (perf_fd == -1) {
       fprintf(stderr, "perf_event_open failed\n");
       exit(2);
     }
-    std::cout << "133" << std::endl;
-    unordered_map<string, int> function_map;
-    function_map.insert({"all", 0});
-    void* buffer = mmap(nullptr, (1 + NUM_DATA_PAGES) * PAGE_SIZE,
-                        PROT_READ | PROT_WRITE, MAP_SHARED, perf_fd, 0);
-    perf_event_mmap_page* mmap_header =
-        static_cast<perf_event_mmap_page*>(buffer);
-    void* data =
-        reinterpret_cast<void*>(reinterpret_cast<char*>(buffer) + PAGE_SIZE);
-    std::cout << "142" << std::endl;
-    every_perf_t e_p = {.perf_fd = perf_fd,
-                        .buffer = buffer,
-                        .mmap_header = mmap_header,
-                        .data = data,
-                        .function_map = &function_map};
-    std::cout << "new tid" << event_data->tid << std::endl;
-    std::cout << "new perf fd" << e_p.perf_fd << std::endl;
-    perf_fd_map->insert({event_data->tid, &e_p});
-    std::cout << "149" << std::endl;
-    std::cout << perf_fd_map->at(event_data->tid)->function_map->at("all")
-              << std::endl;
+
+    e_p_map->insert({event_data->tid, every_perf(perf_fd)});
   }
 }
 
-void run_profiler(pid_t child_pid,
-                  unordered_map<pid_t, every_perf_t*>* perf_fd_map) {
+void run_profiler(pid_t child_pid, e_pMap* e_p_map) {
   bool running = true;
 
   while (running) {
-    for (auto perf_record : *perf_fd_map) {
-      std::cout << "159" << std::endl;
-      perf_event_mmap_page* mmap_header = perf_record.second->mmap_header;
-      void* data = perf_record.second->data;
-      std::cout << "162" << std::endl;
+    std::cout << __func__ << "... " << std::endl;
+    e_pMap::iterator it = e_p_map->begin();
+    while (it != e_p_map->end()) {
+      std::cout << __func__ << " " << __LINE__ << " tid: " << it->first
+                << std::endl;
+      perf_event_mmap_page* mmap_header = it->second.mmap_header;
+      void* data = it->second.data;
       if (mmap_header->data_head != mmap_header->data_tail) {
-        get_next_record(mmap_header, data, perf_fd_map);
+        get_next_record(mmap_header, data, e_p_map);
       }
+      ++it;
     }
+    // for (auto& e_p : *e_p_map) {
+    //   std::cout << __func__ << " " << __LINE__ << " tid: " << e_p.first
+    //             << std::endl;
+    //   perf_event_mmap_page* mmap_header = e_p.second.mmap_header;
+    //   void* data = e_p.second.data;
+    //   // std::cout << __func__ << " " << __LINE__ << " first: " << e_p.first
+    //   // " second: " <<  e_p.second.data  << std::endl;
+    //   if (mmap_header->data_head != mmap_header->data_tail) {
+    //     get_next_record(mmap_header, data, e_p_map);
+    //   }
+    // }
   }
 }
 
@@ -246,25 +258,11 @@ int main(int argc, char** argv) {
     char c = 'A';
     write(pipefd[1], &c, 1);
     close(pipefd[1]);
-
-    unordered_map<string, int> function_map;
-    function_map.insert({"all", 0});
-
-    unordered_map<pid_t, every_perf_t*> perf_fd_map;
-    void* buffer = mmap(nullptr, (1 + NUM_DATA_PAGES) * PAGE_SIZE,
-                        PROT_READ | PROT_WRITE, MAP_SHARED, perf_fd, 0);
-    perf_event_mmap_page* mmap_header =
-        static_cast<perf_event_mmap_page*>(buffer);
-    void* data =
-        reinterpret_cast<void*>(reinterpret_cast<char*>(buffer) + PAGE_SIZE);
-    every_perf_t e_p = {.perf_fd = perf_fd,
-                        .buffer = buffer,
-                        .mmap_header = mmap_header,
-                        .data = data,
-                        .function_map = &function_map};
-    perf_fd_map.insert({child_pid, &e_p});
+    std::cout << __func__ << " " << __LINE__ << std::endl;
+    e_pMap* e_p_map = new unordered_map<pid_t, every_perf>();
+    e_p_map->insert({child_pid, every_perf(perf_fd)});
     // Start profiling
-    run_profiler(child_pid, &perf_fd_map);
+    run_profiler(child_pid, e_p_map);
   }
 
   return 0;

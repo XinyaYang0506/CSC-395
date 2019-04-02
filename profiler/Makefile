@@ -1,5 +1,5 @@
 CXX := clang++
-CXXFLAGS := --std=c++11 -g -Wall $(shell pkg-config --libs --cflags libelf++ libdwarf++)
+CXXFLAGS := --std=c++11 -g -Wall -fsanitize=address $(shell pkg-config --libs --cflags libelf++ libdwarf++)
 
 all: profiler inspect
 
